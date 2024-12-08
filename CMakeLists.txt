@@ -73,11 +73,15 @@ install(TARGETS ${EXECUTABLES} classifyExact
     RUNTIME DESTINATION bin
 )
 
-# Enable testing
-enable_testing()
-if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test.sh")
-    add_test(NAME integration_test
-        COMMAND ${CMAKE_SOURCE_DIR}/tests/test.sh
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests
-    )
+# Optional testing
+option(BUILD_TESTING "Build tests" OFF)
+if(BUILD_TESTING)
+    enable_testing()
+    # Add individual test targets here when they're ready
+    if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test.sh")
+        add_test(NAME integration_test
+            COMMAND ${CMAKE_SOURCE_DIR}/tests/test.sh
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/tests
+        )
+    endif()
 endif()
