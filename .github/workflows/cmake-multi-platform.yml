@@ -80,6 +80,7 @@ jobs:
           -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           ${{ runner.os == 'Windows' && '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake' || '' }}
+          ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES=x86_64' || '' }}
           -S ${{ github.workspace }}
 
       - name: Build
@@ -89,3 +90,37 @@ jobs:
         working-directory: ${{ steps.strings.outputs.build-output-dir }}
         continue-on-error: true
         run: ctest --build-config ${{ matrix.build_type }} --output-on-failure --verbose
+
+      - name: Package Artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        run: |
+          cd ${{ steps.strings.outputs.build-output-dir }}
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a artifact-${{ runner.os }}.zip .
+          else
+            tar -czf artifact-${{ runner.os }}.tar.gz *
+          fi
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && matrix.os == 'ubuntu-latest'
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Release v${{ github.run_number }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.strings.outputs.build-output-dir }}/artifact-${{ runner.os }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+          asset_name: artifact-${{ runner.os }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+          asset_content_type: ${{ runner.os == 'Windows' && 'application/zip' || 'application/gzip' }}
