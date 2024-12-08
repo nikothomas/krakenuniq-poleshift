@@ -14,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         build_type: [Release]
-        c_compiler: [gcc, clang, cl]
+        c_compiler: [gcc, clang]
         include:
           - os: ubuntu-latest
             c_compiler: clang
@@ -24,13 +24,9 @@ jobs:
             cpp_compiler: clang++
         exclude:
           - os: ubuntu-latest
-            c_compiler: cl
-          - os: ubuntu-latest
             c_compiler: gcc
           - os: macos-latest
             c_compiler: gcc
-          - os: macos-latest
-            c_compiler: cl
 
     steps:
       - uses: actions/checkout@v4
@@ -46,13 +42,6 @@ jobs:
         run: |
           brew install zlib bzip2
 
-      - name: Install Windows Dependencies
-        if: runner.os == 'Windows'
-        run: |
-          vcpkg install zlib:x64-windows
-          vcpkg install bzip2:x64-windows
-          vcpkg integrate install
-
       - name: Set reusable strings
         id: strings
         shell: bash
@@ -60,65 +49,48 @@ jobs:
           echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
       - name: Set execute permissions on test scripts
-        if: runner.os != 'Windows'
         run: |
           chmod +x tests/*.sh
           chmod +x tests/*.pl
 
       - name: Configure CMake
-        run: >
-          cmake -B ${{ steps.strings.outputs.build-output-dir }}
-          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
-          -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
-          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-          ${{ runner.os == 'Windows' && '-DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake' || '' }}
-          ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES=x86_64' || '' }}
-          -S ${{ github.workspace }}
+        run: |
+          cmake -B ${{ steps.strings.outputs.build-output-dir }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} \
+            -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            ${{ runner.os == 'macOS' && '-DCMAKE_OSX_ARCHITECTURES=x86_64' || '' }} \
+            -S ${{ github.workspace }}
 
       - name: Build
-        shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            cmake --build "${{ steps.strings.outputs.build-output-dir }}" --config Release
-          else
-            cmake --build "${{ steps.strings.outputs.build-output-dir }}"
-          fi
+          cmake --build "${{ steps.strings.outputs.build-output-dir }}" --config Release
 
       - name: Test
         working-directory: ${{ steps.strings.outputs.build-output-dir }}
         continue-on-error: true
-        shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            ctest -C Release --output-on-failure --verbose
-          else
-            ctest --output-on-failure --verbose
-          fi
+          ctest --output-on-failure --verbose
 
       - name: Package Artifacts
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        shell: bash
+        if: github.event_name == 'push' && github.ref == 'refs/heads/publish'
         run: |
           cd ${{ steps.strings.outputs.build-output-dir }}
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            7z a artifact-${{ runner.os }}.zip ./Release/*
-          else
-            tar -czf artifact-${{ runner.os }}.tar.gz *
-          fi
+          tar -czf artifact-${{ runner.os }}.tar.gz *
 
       - name: Upload Artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/publish'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ runner.os }}-build
-          path: ${{ steps.strings.outputs.build-output-dir }}/artifact-${{ runner.os }}.${{ runner.os == 'Windows' && 'zip' || 'tar.gz' }}
+          path: ${{ steps.strings.outputs.build-output-dir }}/artifact-${{ runner.os }}.tar.gz
           retention-days: 5
           compression-level: 6
           if-no-files-found: error
 
   release:
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/publish'
     runs-on: ubuntu-latest
 
     steps:
@@ -135,8 +107,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: actions/create-release@v1
         with:
-          tag_name: v${{ github.run_number }}
-          release_name: Release v${{ github.run_number }}
+          tag_name: v1.0.0           # Hardcoded version
+          release_name: Release v1.0.0
           draft: false
           prerelease: false
 
@@ -145,21 +117,25 @@ jobs:
         with:
           script: |
             const fs = require('fs').promises;
-            const { repo: { owner, repo }, sha } = context;
+            const path = require('path');
+            const { owner, repo } = context.repo;
+            const release_id = '${{ steps.create_release.outputs.id }}';
             
             const files = await fs.readdir('./artifacts');
             for (const file of files) {
-              const contentLength = (await fs.stat(`./artifacts/${file}`)).size;
+              const filePath = path.join('./artifacts', file);
+              const fileData = await fs.readFile(filePath);
+              const stats = await fs.stat(filePath);
             
               await github.rest.repos.uploadReleaseAsset({
                 owner,
                 repo,
-                release_id: '${{ steps.create_release.outputs.id }}',
+                release_id,
                 name: file,
-                data: await fs.readFile(`./artifacts/${file}`),
+                data: fileData,
                 headers: {
                   'content-type': 'application/octet-stream',
-                  'content-length': contentLength
+                  'content-length': stats.size
                 }
               });
             }
