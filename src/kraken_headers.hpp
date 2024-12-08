@@ -23,10 +23,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <vector>
-#include "memory_utils.hpp"
 
 #ifdef _WIN32
-// Windows-specific headers and definitions
 #include <windows.h>
 #include <io.h>
 #define sysexits_h_
@@ -36,7 +34,65 @@
 #define EX_SOFTWARE 70
 #define EX_OSERR 71
 
-// Error handling functions
+// Memory mapping constants for Windows
+#define PROT_READ 0x1
+#define PROT_WRITE 0x2
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_ANONYMOUS 0x20
+#define MAP_FAILED ((void *)-1)
+#define MS_SYNC 0x04
+
+// Memory mapping functions for Windows
+inline void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset) {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    DWORD protect = PAGE_READONLY;
+    DWORD desiredAccess = FILE_MAP_READ;
+
+    if (prot & PROT_WRITE) {
+        protect = PAGE_READWRITE;
+        desiredAccess = FILE_MAP_WRITE;
+    }
+
+    if (flags & MAP_ANONYMOUS) {
+        handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, protect,
+                                 (DWORD)((length >> 32) & 0xFFFFFFFF),
+                                 (DWORD)(length & 0xFFFFFFFF), NULL);
+    } else {
+        HANDLE file = (HANDLE)_get_osfhandle(fd);
+        handle = CreateFileMapping(file, NULL, protect, 0, 0, NULL);
+    }
+
+    if (handle == NULL) return MAP_FAILED;
+
+    void *map = MapViewOfFile(handle, desiredAccess,
+                             (DWORD)((offset >> 32) & 0xFFFFFFFF),
+                             (DWORD)(offset & 0xFFFFFFFF), length);
+    CloseHandle(handle);
+
+    if (map == NULL) return MAP_FAILED;
+    return map;
+}
+
+inline int munmap(void *addr, size_t length) {
+    return UnmapViewOfFile(addr) ? 0 : -1;
+}
+
+inline int madvise(void *addr, size_t length, int advice) {
+    return 0; // Windows doesn't have direct equivalent
+}
+
+inline int msync(void *addr, size_t length, int flags) {
+    return FlushViewOfFile(addr, length) ? 0 : -1;
+}
+
+inline int getpagesize() {
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwPageSize;
+}
+
+// Error functions
 inline void err(int eval, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -72,8 +128,9 @@ inline void warnx(const char* fmt, ...) {
 }
 
 #else
-// Unix-specific headers
+// Unix headers and functions
 #include <err.h>
+#include <sys/mman.h>
 #include <sys/time.h>
 #include <sysexits.h>
 #include <unistd.h>
