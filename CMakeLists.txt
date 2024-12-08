@@ -10,8 +10,17 @@ find_package(ZLIB REQUIRED)
 find_package(BZip2 REQUIRED)
 find_package(OpenMP)
 
-# Set compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wfatal-errors -pipe -O2")
+# Set compiler flags based on compiler type
+if(MSVC)
+    # MSVC-specific flags
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /WX /O2")
+    # Disable specific warnings if needed
+    # add_definitions(/wd4244 /wd4267) # Example of disabling specific warnings
+else()
+    # GCC/Clang flags
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wfatal-errors -pipe -O2")
+endif()
+
 if(NDEBUG)
     add_definitions(-DNDEBUG)
 endif()
