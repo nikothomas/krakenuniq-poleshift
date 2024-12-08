@@ -78,8 +78,18 @@ KrakenDB::KrakenDB(char *ptr, size_t filesize) {
 }
 
 // destructor
+// Destructor fix:
 KrakenDB::~KrakenDB() {
-  munmap(data, data_size);
+#ifdef _WIN32
+  if (data != NULL) {
+    VirtualUnlock(data, data_size);
+    VirtualFree(data, 0, MEM_RELEASE);
+  }
+#else
+  if (data != NULL) {
+    munmap(data, data_size);
+  }
+#endif
 }
 
 size_t KrakenDB::filesize() const {
@@ -120,10 +130,11 @@ void KrakenDB::make_index(string index_filename, uint8_t nt) {
   vector<uint64_t> bin_counts(entries);
   char *ptr = get_pair_ptr();
 
+// Fix for OpenMP loop:
 #ifdef _OPENMP
   #pragma omp parallel for schedule(dynamic,400)
 #endif
-  for (uint64_t i = 0; i < key_ct; i++) {
+  for (int64_t i = 0; i < (int64_t)key_ct; i++) {
     uint64_t kmer = 0;
     memcpy(&kmer, ptr + i * pair_size(), key_len);
     uint64_t b_key = bin_key(kmer, nt);
@@ -460,66 +471,25 @@ uint64_t KrakenDB::upper_bound(uint64_t first, const uint64_t last)
   return first;
 }
 
+// Memory management fixes:
 void KrakenDB::prepare_chunking(const uint64_t max_bytes_for_db) {
+#ifdef _WIN32
+  data = (char*)VirtualAlloc(NULL, max_bytes_for_db, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+  if (data == NULL)
+#else
   data = (char*) mmap(0, max_bytes_for_db, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (data == (void *) -1)
+  if (data == MAP_FAILED)
+#endif
   {
     printf("ERROR: Could not allocated memory for loading database chunks (error code %i: %s)\n", errno, strerror(errno));
     exit(-1);
   }
   data_size = max_bytes_for_db;
+#ifdef _WIN32
+  VirtualLock(data, data_size);
+#else
   mlock(data, data_size);
-
-  this->_chunks = 0;
-
-  const uint64_t max_idx_pos = 1ull << (2 * index_ptr->indexed_nt()); // excl bound (half-open interval)
-  // const uint64_t max_dbx_pos = index_ptr->mmap_at(max_idx_pos); // excl bound (half-open interval)
-  uint64_t idx_pos = 0;
-  uint64_t dbx_pos = 0; // == index_ptr->mmap_at(0);
-  idx_chunk_bounds.push_back(idx_pos);
-  dbx_chunk_bounds.push_back(dbx_pos);
-
-  while (idx_pos < max_idx_pos)
-  {
-    // upper_bound returns element idx_pos that is the first that "is greater" (i.e., that does not fit into "data")
-    // in other terms, idx_pos closes our half-open interval (excl. upper bound), hence we don't need to decrement it
-    idx_pos = upper_bound(idx_pos, max_idx_pos);
-    // get starting position for next larger minimizer (that does not fit into "data")
-    // in other terms, dbx_pos closes our half-open interval (excl. upper bound), hence we don't need to decrement it
-    dbx_pos = index_ptr->mmap_at(idx_pos);
-
-    // uint64_t idx_size = (idx_pos - idx_chunk_bounds.back()) * 8;
-    // uint64_t dbx_size = (dbx_pos - dbx_chunk_bounds.back()) * pair_size();
-    // printf("- %" PRIu64 ": %s\n", idx_size + dbx_size, (idx_size + dbx_size <= data_size ? "ok" : "NOT OK, does not fit into data"));
-
-    // especially the last chunk can have 0 k-mers but a huge part of minimizers in it (that did not occur in any k-mer in the database)
-    // in that case we can skip that chunk!
-    if (dbx_pos == dbx_chunk_bounds.back())
-      continue;
-
-    idx_chunk_bounds.push_back(idx_pos);
-    dbx_chunk_bounds.push_back(dbx_pos);
-
-    this->_chunks++;
-  }
-
-  // printf("Chunk bounds\n");
-  // for (uint32_t i = 0; i < this->_chunks + 1; ++i)
-  //   printf("%llu\t%llu\n", idx_chunk_bounds[i], dbx_chunk_bounds[i]);
-
-  // printf("Chunk sizes\n");
-  // for (uint32_t i = 1; i < this->_chunks + 1; ++i) {
-    // uint64_t idx_size = (idx_chunk_bounds[i] - idx_chunk_bounds[i - 1]) * 8;
-    // uint64_t dbx_size = (dbx_chunk_bounds[i] - dbx_chunk_bounds[i - 1]) * pair_size();
-    // float idx_size_gb = 1.0f * idx_size / (1024 * 1024 * 1024);
-    // float dbx_size_gb = 1.0f * dbx_size / (1024 * 1024 * 1024);
-    // printf("Chunk %u: %.2f GB\t%.2f GB (upper bounds: %llu\t%llu)\n", i - 1, idx_size_gb, dbx_size_gb, idx_chunk_bounds[i], dbx_chunk_bounds[i]);
-    // if (idx_size + dbx_size > data_size) {
-    //   printf("ERROR: %llu > %llu\n", idx_size + dbx_size, data_size);
-    //   exit(1);
-    // }
-  // }
-}
+#endif
 
 bool KrakenDB::is_minimizer_in_chunk(const uint64_t minimizer, const uint32_t db_chunk_id) const {
     return idx_chunk_bounds[db_chunk_id] <= minimizer && minimizer < idx_chunk_bounds[db_chunk_id + 1];
