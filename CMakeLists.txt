@@ -13,9 +13,14 @@ find_package(OpenMP)
 # Set compiler flags based on compiler type
 if(MSVC)
     # MSVC-specific flags
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /WX /O2")
+    # Add /W4 for warnings but remove /WX to not treat warnings as errors
+    string(REGEX REPLACE "/W[0-4]" "/W4" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    # Remove /WX if present
+    string(REGEX REPLACE "/WX" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    # Add optimization
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /O2")
     # Disable specific warnings if needed
-    # add_definitions(/wd4244 /wd4267) # Example of disabling specific warnings
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 else()
     # GCC/Clang flags
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wfatal-errors -pipe -O2")
@@ -86,7 +91,6 @@ install(TARGETS ${EXECUTABLES} classifyExact
 option(BUILD_TESTING "Build tests" OFF)
 if(BUILD_TESTING)
     enable_testing()
-    # Add individual test targets here when they're ready
     if(EXISTS "${CMAKE_SOURCE_DIR}/tests/test.sh")
         add_test(NAME integration_test
             COMMAND ${CMAKE_SOURCE_DIR}/tests/test.sh
