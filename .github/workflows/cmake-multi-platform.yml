@@ -14,11 +14,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         build_type: [Release]
-        c_compiler: [gcc, clang]
+        c_compiler: [gcc, clang, cl]
         include:
           - os: windows-latest
-            c_compiler: gcc
-            cpp_compiler: g++
+            c_compiler: cl
+            cpp_compiler: cl
           - os: ubuntu-latest
             c_compiler: clang
             cpp_compiler: clang++
@@ -31,9 +31,13 @@ jobs:
           - os: windows-latest
             c_compiler: clang
           - os: ubuntu-latest
+            c_compiler: cl
+          - os: ubuntu-latest
             c_compiler: gcc
           - os: macos-latest
             c_compiler: gcc
+          - os: macos-latest
+            c_compiler: cl
 
     steps:
       - uses: actions/checkout@v4
@@ -79,12 +83,24 @@ jobs:
           -S ${{ github.workspace }}
 
       - name: Build
-        run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            cmake --build "${{ steps.strings.outputs.build-output-dir }}" --config Release
+          else
+            cmake --build "${{ steps.strings.outputs.build-output-dir }}"
+          fi
 
       - name: Test
         working-directory: ${{ steps.strings.outputs.build-output-dir }}
         continue-on-error: true
-        run: ctest --build-config ${{ matrix.build_type }} --output-on-failure --verbose
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            ctest -C Release --output-on-failure --verbose
+          else
+            ctest --output-on-failure --verbose
+          fi
 
       - name: Package Artifacts
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -92,7 +108,7 @@ jobs:
         run: |
           cd ${{ steps.strings.outputs.build-output-dir }}
           if [ "${{ runner.os }}" == "Windows" ]; then
-            7z a artifact-${{ runner.os }}.zip .
+            7z a artifact-${{ runner.os }}.zip ./Release/*
           else
             tar -czf artifact-${{ runner.os }}.tar.gz *
           fi
